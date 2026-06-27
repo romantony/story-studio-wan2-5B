@@ -1,7 +1,8 @@
 """
 setup_volume.py — Download WAN2.2 TI2V-5B model to a RunPod network volume.
 
-Run this INSIDE a temporary RunPod pod that has your volume mounted at /runpod-volume.
+Run this INSIDE a RunPod pod that has your network volume attached.
+The script auto-detects the mount point (/workspace for dev pods, /runpod-volume for serverless).
 Safe to re-run — skips already-present files.
 
 Usage:
@@ -33,7 +34,19 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "huggingface_hub"])
     print("[SETUP] huggingface_hub installed.")
 
-VOLUME    = Path(os.environ.get("RUNPOD_VOLUME_PATH", "/runpod-volume"))
+# RunPod mounts network volumes at /workspace in dev/SSH pods,
+# and at /runpod-volume in serverless workers.
+def _detect_volume() -> Path:
+    env = os.environ.get("RUNPOD_VOLUME_PATH")
+    if env:
+        return Path(env)
+    for candidate in ("/workspace", "/runpod-volume"):
+        p = Path(candidate)
+        if p.exists() and os.path.ismount(candidate):
+            return p
+    return Path("/workspace")  # fallback
+
+VOLUME    = _detect_volume()
 MODEL_DIR = VOLUME / "models"
 
 MODELS = {
