@@ -5,7 +5,7 @@ Run this INSIDE a temporary RunPod pod that has your volume mounted at /runpod-v
 Safe to re-run — skips already-present files.
 
 Usage:
-    python3 setup_volume.py       # download everything (~20 GB)
+    python3 setup_volume.py       # download everything (~20 GB, needs 22+ GB free)
     python3 setup_volume.py wan   # WAN2.2 TI2V-5B model only
 
 Model size breakdown:
@@ -16,13 +16,22 @@ Model size breakdown:
       Wan2.2_VAE.pth                                      ~1 GB
       models_t5_umt5-xxl-enc-bf16.pth                     ~5 GB
       google/umt5-xxl/  (tokenizer)                       ~1 GB
-    Total: ~22 GB
+    Total: ~20 GB
 """
 
 import os
 import sys
+import subprocess
 import time
 from pathlib import Path
+
+# Auto-install huggingface_hub if missing (bare RunPod pods often lack it)
+try:
+    import huggingface_hub  # noqa: F401
+except ImportError:
+    print("[SETUP] Installing huggingface_hub...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "huggingface_hub"])
+    print("[SETUP] huggingface_hub installed.")
 
 VOLUME    = Path(os.environ.get("RUNPOD_VOLUME_PATH", "/runpod-volume"))
 MODEL_DIR = VOLUME / "models"
@@ -32,7 +41,7 @@ MODELS = {
         "Wan-AI/Wan2.2-TI2V-5B",
         MODEL_DIR / "wan22-ti2v-5b",
         "config.json",
-        22,
+        20,
     ),
 }
 
