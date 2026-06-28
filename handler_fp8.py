@@ -99,9 +99,11 @@ _FPS = 24
 
 def _patch_transformer_config():
     """
-    The model's transformer/config.json was saved before diffusers added
-    quant_type as a required field to NVIDIAModelOptConfig.  Patch it once
-    so from_pretrained can parse the quantization_config block.
+    Remove quantization_config from transformer/config.json so diffusers loads
+    the FP8 safetensors weights as plain BF16 tensors via torch_dtype casting.
+    This avoids requiring nvidia-modelopt (which conflicts with torchvision in
+    the base image). Still benefits from the 4x smaller transformer on disk.
+    Runs once; subsequent workers find quantization_config already absent.
     """
     import json
     from pathlib import Path
@@ -109,11 +111,10 @@ def _patch_transformer_config():
     if not cfg_path.exists():
         return
     cfg = json.loads(cfg_path.read_text())
-    qc = cfg.get("quantization_config")
-    if qc and "quant_type" not in qc:
-        cfg["quantization_config"]["quant_type"] = "fp8"
+    if "quantization_config" in cfg:
+        del cfg["quantization_config"]
         cfg_path.write_text(json.dumps(cfg, indent=2))
-        print("[LOADER] Patched transformer/config.json: added quant_type=fp8")
+        print("[LOADER] Removed quantization_config from transformer/config.json (FP8 weights load as BF16)")
 
 
 def load_model():
