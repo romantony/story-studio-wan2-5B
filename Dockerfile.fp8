@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir \
     transformers \
     accelerate \
     sentencepiece \
+    imageio \
     imageio-ffmpeg \
     Pillow \
     numpy
