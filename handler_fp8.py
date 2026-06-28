@@ -99,22 +99,45 @@ _FPS = 24
 
 def _patch_transformer_config():
     """
-    Remove quantization_config from transformer/config.json so diffusers loads
-    the FP8 safetensors weights as plain BF16 tensors via torch_dtype casting.
-    This avoids requiring nvidia-modelopt (which conflicts with torchvision in
-    the base image). Still benefits from the 4x smaller transformer on disk.
-    Runs once; subsequent workers find quantization_config already absent.
+    Ensure transformer/config.json has a valid quantization_config with quant_type.
+    Previous workers may have incorrectly removed this block; restore it if so.
+    Without it nvidia-modelopt cannot apply the per-tensor FP8 scale factors,
+    causing all weights to be wrong and the model to output noise.
     """
     import json
     from pathlib import Path
+
     cfg_path = Path(WAN_FP8_MODEL) / "transformer" / "config.json"
     if not cfg_path.exists():
         return
+
     cfg = json.loads(cfg_path.read_text())
-    if "quantization_config" in cfg:
-        del cfg["quantization_config"]
+    changed = False
+
+    if "quantization_config" not in cfg:
+        # A previous incorrect patch removed it — restore from HuggingFace
+        print("[LOADER] quantization_config missing — restoring from HuggingFace...")
+        try:
+            from huggingface_hub import hf_hub_download
+            orig_path = hf_hub_download(
+                repo_id="shunyang90/Wan2.2-TI2V-5B-ModelOpt-FP8",
+                filename="transformer/config.json",
+            )
+            orig = json.loads(Path(orig_path).read_text())
+            cfg["quantization_config"] = orig["quantization_config"]
+            changed = True
+            print("[LOADER] quantization_config restored")
+        except Exception as e:
+            print(f"[LOADER] ERROR: could not restore quantization_config: {e}")
+            return
+
+    if "quant_type" not in cfg.get("quantization_config", {}):
+        cfg["quantization_config"]["quant_type"] = "fp8"
+        changed = True
+
+    if changed:
         cfg_path.write_text(json.dumps(cfg, indent=2))
-        print("[LOADER] Removed quantization_config from transformer/config.json (FP8 weights load as BF16)")
+        print("[LOADER] transformer/config.json patched OK")
 
 
 def load_model():
