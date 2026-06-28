@@ -20,6 +20,10 @@ WORKDIR /app
 # Use shallow clone to keep image lean (~10 MB vs ~250 MB with full history).
 RUN git clone --depth 1 https://github.com/Wan-Video/Wan2.2.git /opt/wan22
 
+# Remove the speech-to-video import from wan/__init__.py — it unconditionally
+# pulls in librosa + the entire audio stack at import time, but we only use TI2V.
+RUN sed -i '/speech2video\|WanS2V/d' /opt/wan22/wan/__init__.py
+
 # Install WAN2.2 deps, excluding:
 #   flash_attn  — needs full CUDA/C++ build (30+ min); torch SDPA is the fallback
 #   dashscope   — only needed for LLM-based prompt expansion, we skip that feature
