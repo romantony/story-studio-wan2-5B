@@ -126,8 +126,7 @@ def load_model():
         config         = config,
         checkpoint_dir = WAN_MODEL,
         device_id      = 0,
-        t5_cpu         = False,        # keep T5 on GPU for speed (A40 has headroom)
-        offload_model  = False,        # override per-request for smaller GPUs
+        t5_cpu         = False,
     )
     _load_time = round(time.time() - t0, 1)
     print(f"[LOADER] WAN2.2 TI2V-5B ready in {_load_time}s")
@@ -225,7 +224,6 @@ def handler(event):
             guide_scale   = guidance,
             n_prompt      = neg_prompt,
             seed          = seed,
-            offload_model = False,
         )
 
         gen_time_s = round(time.time() - t_gen, 1)
