@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# NVIDIA ModelOpt — provides modelopt.torch.quantization needed by diffusers
+# to load NVIDIAModelOptConfig FP8 weights (Ada/Hopper/Blackwell only)
+RUN pip install --no-cache-dir "nvidia-modelopt[torch]"
+
 # diffusers + deps — much simpler than the native WAN library approach
 RUN pip install --no-cache-dir \
     "diffusers>=0.33.0" \
