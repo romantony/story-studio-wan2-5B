@@ -15,10 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ── flash_attn (build from source — requires devel image with nvcc, ~30 min) ─
-# Placed early so this expensive layer is cached independently of WAN2.2 / handler changes.
-RUN pip install --no-cache-dir flash-attn --no-build-isolation
-
 # ── WAN2.2 library ───────────────────────────────────────────────────────────
 # Clone into /opt/wan22 — handler.py adds this to sys.path at runtime.
 # Use shallow clone to keep image lean (~10 MB vs ~250 MB with full history).
