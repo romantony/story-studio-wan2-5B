@@ -32,7 +32,10 @@ RUN pip install --no-cache-dir \
     runpod \
     boto3 \
     huggingface_hub \
-    einops
+    einops \
+    decord \
+    imageio-ffmpeg \
+    timm
 
 # ── Copy handler ─────────────────────────────────────────────────────────────
 COPY handler.py .
