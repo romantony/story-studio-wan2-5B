@@ -1,6 +1,7 @@
 test_local.py
 test_endpoint.sh
 test_input.json
+quantize_fp8.py
 *.mp4
 __pycache__/
 *.pyc
