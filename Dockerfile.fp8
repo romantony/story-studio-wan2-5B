@@ -1,0 +1,31 @@
+FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# diffusers + deps — much simpler than the native WAN library approach
+RUN pip install --no-cache-dir \
+    "diffusers>=0.33.0" \
+    transformers \
+    accelerate \
+    sentencepiece \
+    imageio-ffmpeg \
+    Pillow \
+    numpy
+
+# RunPod + R2
+RUN pip install --no-cache-dir \
+    runpod \
+    boto3
+
+COPY handler_fp8.py handler.py
+
+CMD ["python3", "-u", "handler.py"]
