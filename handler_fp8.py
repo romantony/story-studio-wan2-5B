@@ -97,12 +97,33 @@ _VALID_SIZES = {"1280*704", "704*1280"}
 _FPS = 24
 
 
+def _patch_transformer_config():
+    """
+    The model's transformer/config.json was saved before diffusers added
+    quant_type as a required field to NVIDIAModelOptConfig.  Patch it once
+    so from_pretrained can parse the quantization_config block.
+    """
+    import json
+    from pathlib import Path
+    cfg_path = Path(WAN_FP8_MODEL) / "transformer" / "config.json"
+    if not cfg_path.exists():
+        return
+    cfg = json.loads(cfg_path.read_text())
+    qc = cfg.get("quantization_config")
+    if qc and "quant_type" not in qc:
+        cfg["quantization_config"]["quant_type"] = "fp8"
+        cfg_path.write_text(json.dumps(cfg, indent=2))
+        print("[LOADER] Patched transformer/config.json: added quant_type=fp8")
+
+
 def load_model():
     global _pipe_t2v, _pipe_i2v, _load_time
     if _pipe_t2v is not None:
         return
 
     from diffusers import WanPipeline, WanImageToVideoPipeline
+
+    _patch_transformer_config()
 
     print(f"[LOADER] WAN2.2 TI2V-5B FP8 from {WAN_FP8_MODEL} ...")
     t0 = time.time()
