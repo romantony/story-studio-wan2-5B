@@ -1,0 +1,6 @@
+test_local.py
+test_endpoint.sh
+test_input.json
+*.mp4
+__pycache__/
+*.pyc

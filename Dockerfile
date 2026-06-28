@@ -31,7 +31,8 @@ RUN grep -vE '^\s*(flash.attn|dashscope)' /opt/wan22/requirements.txt \
 RUN pip install --no-cache-dir \
     runpod \
     boto3 \
-    huggingface_hub
+    huggingface_hub \
+    einops
 
 # ── Copy handler ─────────────────────────────────────────────────────────────
 COPY handler.py .
