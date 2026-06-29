@@ -209,8 +209,10 @@ def load_model():
     )
     _pipe_t2v.to("cuda")
 
-    # Reuse loaded weights — no double VRAM cost
-    _pipe_i2v = WanImageToVideoPipeline(**_pipe_t2v.components)
+    # Reuse loaded weights — no double VRAM cost.
+    # expand_timesteps=True enables WAN2.2 TI2V i2v conditioning: clean image at
+    # frame 0, noisy latents elsewhere — keeps in_channels=48 (not WAN2.1's 100ch concat).
+    _pipe_i2v = WanImageToVideoPipeline(**_pipe_t2v.components, expand_timesteps=True)
 
     _load_time = round(time.time() - t0, 1)
     vram_gb = torch.cuda.memory_allocated() / 1e9
