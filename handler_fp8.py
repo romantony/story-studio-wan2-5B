@@ -97,12 +97,12 @@ _VALID_SIZES = {"1280*704", "704*1280"}
 _FPS = 24
 
 
-def _patch_transformer_config():
+def _strip_quantization_config():
     """
-    Ensure transformer/config.json has a valid quantization_config with quant_type.
-    Previous workers may have incorrectly removed this block; restore it if so.
-    Without it nvidia-modelopt cannot apply the per-tensor FP8 scale factors,
-    causing all weights to be wrong and the model to output noise.
+    Remove quantization_config from transformer/config.json on the network volume.
+    We load FP8 weights manually (bypassing diffusers' modelopt integration), so
+    the quantization_config block must be absent when diffusers reads the config.
+    Safe to call on every startup — no-ops if already stripped.
     """
     import json
     from pathlib import Path
@@ -110,34 +110,77 @@ def _patch_transformer_config():
     cfg_path = Path(WAN_FP8_MODEL) / "transformer" / "config.json"
     if not cfg_path.exists():
         return
-
     cfg = json.loads(cfg_path.read_text())
-    changed = False
-
-    if "quantization_config" not in cfg:
-        # A previous incorrect patch removed it — restore from HuggingFace
-        print("[LOADER] quantization_config missing — restoring from HuggingFace...")
-        try:
-            from huggingface_hub import hf_hub_download
-            orig_path = hf_hub_download(
-                repo_id="shunyang90/Wan2.2-TI2V-5B-ModelOpt-FP8",
-                filename="transformer/config.json",
-            )
-            orig = json.loads(Path(orig_path).read_text())
-            cfg["quantization_config"] = orig["quantization_config"]
-            changed = True
-            print("[LOADER] quantization_config restored")
-        except Exception as e:
-            print(f"[LOADER] ERROR: could not restore quantization_config: {e}")
-            return
-
-    if "quant_type" not in cfg.get("quantization_config", {}):
-        cfg["quantization_config"]["quant_type"] = "fp8"
-        changed = True
-
-    if changed:
+    if "quantization_config" in cfg:
+        del cfg["quantization_config"]
         cfg_path.write_text(json.dumps(cfg, indent=2))
-        print("[LOADER] transformer/config.json patched OK")
+        print("[LOADER] Stripped quantization_config from transformer/config.json")
+
+
+def _load_fp8_transformer(model_path: str):
+    """
+    Load the FP8-quantized transformer and dequantize weights to BF16.
+
+    The safetensors store weights as float8_e4m3fn with companion per-tensor
+    scale factors (X.weight_scale).  Dequant: w_bf16 = w_fp8.float() * scale.
+    We skip modelopt entirely — no version-skew issues, no torchvision conflicts.
+    """
+    import json
+    import safetensors.torch
+    from pathlib import Path
+    from diffusers.models import WanTransformer3DModel
+
+    transformer_dir = Path(model_path) / "transformer"
+
+    # Build architecture from config (no quantization_config)
+    cfg = json.loads((transformer_dir / "config.json").read_text())
+    cfg.pop("quantization_config", None)
+    transformer = WanTransformer3DModel.from_config(cfg)
+
+    # Collect shard filenames from index
+    index_file = transformer_dir / "diffusion_pytorch_model.safetensors.index.json"
+    if index_file.exists():
+        index = json.loads(index_file.read_text())
+        shard_names = sorted(set(index["weight_map"].values()))
+    else:
+        shard_names = sorted(f.name for f in transformer_dir.glob("*.safetensors"))
+
+    # Load every tensor from every shard
+    all_tensors: dict = {}
+    for name in shard_names:
+        all_tensors.update(
+            safetensors.torch.load_file(str(transformer_dir / name), device="cpu")
+        )
+
+    # Separate weight scales / calibration data from model weights
+    _scale_suffixes = ("_scale", "._amax", "_quantizer")
+    scale_tensors = {k: v for k, v in all_tensors.items()
+                     if any(k.endswith(s) or ("_quantizer" in k) for s in _scale_suffixes)}
+    weight_tensors = {k: v for k, v in all_tensors.items() if k not in scale_tensors}
+
+    # Dequantize FP8 → BF16 using companion weight_scale tensors
+    state_dict: dict = {}
+    fp8_dtypes = {torch.float8_e4m3fn, torch.float8_e5m2}
+    for key, tensor in weight_tensors.items():
+        if tensor.dtype in fp8_dtypes:
+            # e.g. "blocks.0.attn1.to_q.weight" → "blocks.0.attn1.to_q.weight_scale"
+            scale_key = key[:-len(".weight")] + ".weight_scale" if key.endswith(".weight") else key + "_scale"
+            if scale_key in scale_tensors:
+                scale = scale_tensors[scale_key].to(torch.float32)
+                state_dict[key] = (tensor.to(torch.float32) * scale).to(torch.bfloat16)
+            else:
+                print(f"[LOADER] WARN: no scale for FP8 tensor {key}, casting directly")
+                state_dict[key] = tensor.to(torch.bfloat16)
+        else:
+            state_dict[key] = tensor.to(torch.bfloat16) if tensor.is_floating_point() else tensor
+
+    missing, unexpected = transformer.load_state_dict(state_dict, strict=False)
+    if unexpected:
+        print(f"[LOADER] {len(unexpected)} unexpected keys ignored")
+    if missing:
+        print(f"[LOADER] WARN: {len(missing)} missing keys: {missing[:5]}...")
+
+    return transformer.to(torch.bfloat16)
 
 
 def load_model():
@@ -147,13 +190,21 @@ def load_model():
 
     from diffusers import WanPipeline, WanImageToVideoPipeline
 
-    _patch_transformer_config()
+    # Ensure modelopt quantization_config is absent so from_pretrained doesn't
+    # invoke nvidia-modelopt (which has incompatible version skew with diffusers).
+    _strip_quantization_config()
 
     print(f"[LOADER] WAN2.2 TI2V-5B FP8 from {WAN_FP8_MODEL} ...")
     t0 = time.time()
 
+    # Load transformer with manual FP8 dequantization (bypasses nvidia-modelopt)
+    transformer = _load_fp8_transformer(WAN_FP8_MODEL)
+    transformer.to("cuda")
+
+    # Load remaining pipeline components (text encoder, VAE, scheduler — all BF16)
     _pipe_t2v = WanPipeline.from_pretrained(
         WAN_FP8_MODEL,
+        transformer=transformer,
         torch_dtype=torch.bfloat16,
     )
     _pipe_t2v.to("cuda")

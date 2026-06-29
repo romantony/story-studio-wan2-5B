@@ -11,28 +11,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# diffusers + deps — much simpler than the native WAN library approach
+# FP8 weights are dequantized manually (no nvidia-modelopt needed)
 RUN pip install --no-cache-dir \
     "diffusers>=0.33.0" \
     transformers \
     accelerate \
     sentencepiece \
+    safetensors \
     ftfy \
     imageio \
     imageio-ffmpeg \
     Pillow \
-    numpy
-
-# nvidia-modelopt provides modelopt.torch.quantization for FP8 weight dequantization.
-# It re-installs an incompatible torchvision, so we force-reinstall the correct
-# cu128 version (0.22.0) that matches torch 2.7.0 from the base image.
-RUN pip install --no-cache-dir "nvidia-modelopt" && \
-    pip install --no-cache-dir --force-reinstall \
-        --index-url https://download.pytorch.org/whl/cu128 \
-        "torchvision==0.22.0"
-
-# RunPod + R2
-RUN pip install --no-cache-dir \
+    numpy \
     runpod \
     boto3
 
