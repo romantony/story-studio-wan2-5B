@@ -1,194 +1,299 @@
-# Story Studio WAN2.2 TI2V-5B — API Reference
+# WAN 2.2 TI2V-5B — API Reference
 
-WAN2.2 TI2V-5B is a 5B-parameter video generation model.
-One model handles both **Text-to-Video (T2V)** and **Image-to-Video (I2V)** generation.
+Endpoint: `https://api.runpod.ai/v2/hyfdmqik62okqs`
 
-- Resolution: **720P** — `1280×704` (landscape) or `704×1280` (portrait)
-- Frame rate: **24 FPS** (fixed)
-- Max quality: 121 frames = 5.0 seconds
+GPU: A40 (48 GB VRAM) · Model: WAN 2.2 TI2V-5B (BF16) · FPS: 24 (fixed)
+
+All requests require header: `Authorization: Bearer <RUNPOD_API_KEY>`
 
 ---
 
-## Submit / Poll Pattern
+## Job lifecycle
 
-All requests are **async** via RunPod's serverless queue:
-
-```bash
-# 1. Submit
-curl -X POST https://api.runpod.ai/v2/{ENDPOINT_ID}/run \
-  -H "Authorization: Bearer $RUNPOD_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"input": {...}}'
-# → {"id": "abc123", "status": "IN_QUEUE"}
-
-# 2. Poll until status == COMPLETED
-curl https://api.runpod.ai/v2/{ENDPOINT_ID}/status/abc123 \
-  -H "Authorization: Bearer $RUNPOD_API_KEY"
-# → {"id": "abc123", "status": "COMPLETED", "output": {...}}
 ```
+POST /run          → { "id": "<job_id>", "status": "IN_QUEUE" }
+GET  /status/<id>  → { "status": "COMPLETED", "output": { ... } }
+```
+
+`status` values: `IN_QUEUE` → `IN_PROGRESS` → `COMPLETED` | `FAILED`
+
+Poll every 10 s. Cold start (model load from network volume) takes **90–120 s** before
+generation begins on a freshly launched worker.
 
 ---
 
 ## Modes
 
-### `t2v` — Text to Video
+| Mode | Description |
+|------|-------------|
+| `i2v` | Image-to-video — animate a reference image guided by a text prompt |
+| `t2v` | Text-to-video — generate a video from a text prompt only |
 
-Generate a video from a text prompt, no input image required.
+---
 
-**Request:**
+## mode: `"i2v"` — Image to Video *(primary mode)*
+
+Animates a reference image into a video. The image becomes the first frame.
+
+> **Use 720p for any content featuring human subjects.** 480p produces face distortion
+> regardless of step count — confirmed in testing.
+
+### Request
+
 ```json
 {
-  "mode": "t2v",
-  "prompt": "Two anthropomorphic cats in boxing gear fight on a spotlit stage",
-  "negative_prompt": "",
-  "size": "1280*704",
-  "frame_num": 81,
-  "steps": 50,
-  "guidance": 5.0,
-  "seed": -1
+  "input": {
+    "mode": "i2v",
+
+    "image_url": "https://...",
+    "image":     "<base64_png_or_jpg>",
+
+    "prompt":          "She walks gracefully along the garden path, turning slightly to look around, leaves gently moving in the breeze",
+    "negative_prompt": "",
+
+    "size":      "720*1280",
+    "frame_num": 121,
+    "steps":     30,
+    "guidance":  5.0,
+    "seed":      -1
+  }
 }
 ```
 
-**Response:**
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `image_url` | string | — | Public URL to reference image (PNG/JPG). Required if no `image`. |
+| `image` | string | — | Base64-encoded PNG/JPG. Required if no `image_url`. |
+| `prompt` | string | **required** | Describe motion, action, camera movement, atmosphere. |
+| `negative_prompt` | string | `""` | Things to avoid in the video. |
+| `size` | string | `"1280*704"` | `"width*height"`. See resolution guide below. |
+| `frame_num` | int | `81` | Must satisfy `(N-1) % 4 == 0`. See frame table below. |
+| `steps` | int | `50` | Denoising steps. **30 recommended** for best quality/speed. |
+| `guidance` | float | `5.0` | Guidance scale. Range: 3.0–7.0. |
+| `seed` | int | `-1` | `-1` = random. Set a fixed value for reproducibility. |
+
+---
+
+## mode: `"t2v"` — Text to Video
+
+Generates a video from a text prompt alone, no reference image needed.
+
+### Request
+
 ```json
 {
-  "mode": "t2v",
-  "video": "https://pub-xxx.r2.dev/jobs/abc123.mp4",
-  "size": "1280x704",
-  "frame_num": 81,
-  "duration_s": 3.37,
-  "fps": 24,
-  "gen_time_s": 48.2,
-  "load_time_s": 32.0
+  "input": {
+    "mode": "t2v",
+
+    "prompt":          "Aerial view of a city at golden hour, slow cinematic pan, dramatic clouds",
+    "negative_prompt": "",
+
+    "size":      "1280*704",
+    "frame_num": 121,
+    "steps":     30,
+    "guidance":  5.0,
+    "seed":      -1
+  }
+}
+```
+
+Fields identical to `i2v`, minus `image_url` / `image`.
+
+---
+
+## Response
+
+```json
+{
+  "mode":       "i2v",
+  "video":      "https://pub-bce4924e66d944668be30268ccf4492c.r2.dev/jobs/<uuid>.mp4",
+  "size":       "720x1280",
+  "frame_num":  121,
+  "duration_s": 5.04,
+  "fps":        24,
+  "gen_time_s": 574.5
+}
+```
+
+`load_time_s` is only present on cold-start (first request after worker launch).
+
+---
+
+## Resolution guide
+
+| `size` | Width | Height | Aspect | Notes |
+|--------|-------|--------|--------|-------|
+| `"720*1280"` | 720 | 1280 | 9:16 portrait | **Recommended — human subjects, Shorts/Reels** |
+| `"704*1280"` | 704 | 1280 | 9:16 portrait | Alternative portrait |
+| `"1280*704"` | 1280 | 704 | 16:9 landscape | YouTube landscape |
+| `"832*480"` | 832 | 480 | 16:9 landscape | 480p landscape — non-human content only |
+| `"480*832"` | 480 | 832 | 9:16 portrait | ⚠ Face distortion on human subjects — avoid |
+
+---
+
+## Frame count table
+
+`(N - 1) % 4 == 0` — required by the WAN VAE temporal compression.
+
+| Duration | `frame_num` |
+|----------|-------------|
+| ~2 s | 49 |
+| ~3 s | 65 |
+| ~4 s | 97 |
+| **~5 s** | **121** ← recommended |
+| ~6 s | 145 |
+| **~7 s** | **169** |
+| ~8 s | 193 |
+
+Invalid frame counts return an error with the nearest valid values.
+
+---
+
+## Step count guide
+
+Tested at 720p 9:16 portrait with human subject:
+
+| `steps` | Gen time · 5 s video | Quality |
+|---------|----------------------|---------|
+| 25 | ~500 s | Good |
+| **30** | **~575 s** | **Best — recommended** |
+| 40 | ~760 s | Diminishing returns |
+| 50 | ~950 s | Maximum |
+
+---
+
+## Timing benchmarks
+
+| Scenario | Gen time (warm worker) |
+|----------|------------------------|
+| Cold start — model load | 90–120 s |
+| 720p 5 s · 121 frames · 30 steps | ~575 s |
+| 720p 7 s · 169 frames · 30 steps | ~800 s |
+| 480p 5 s · 121 frames · 30 steps | ~290 s |
+| 480p 7 s · 169 frames · 30 steps | ~320 s |
+
+---
+
+## Example payloads
+
+**720p portrait · 5 s · i2v (recommended for human subjects)**
+```json
+{
+  "input": {
+    "mode": "i2v",
+    "image_url": "https://pub-bce4924e66d944668be30268ccf4492c.r2.dev/jobs/abc.png",
+    "prompt": "She walks gracefully along the garden path, turning slightly to look around, leaves gently moving in the breeze",
+    "size": "720*1280",
+    "frame_num": 121,
+    "steps": 30,
+    "guidance": 5.0,
+    "seed": -1
+  }
+}
+```
+
+**720p portrait · 7 s · i2v**
+```json
+{
+  "input": {
+    "mode": "i2v",
+    "image_url": "https://pub-bce4924e66d944668be30268ccf4492c.r2.dev/jobs/abc.png",
+    "prompt": "She gazes at the horizon, a light breeze moves her hair, city lights begin to appear below",
+    "size": "720*1280",
+    "frame_num": 169,
+    "steps": 30,
+    "guidance": 5.0,
+    "seed": -1
+  }
+}
+```
+
+**720p landscape · 5 s · t2v**
+```json
+{
+  "input": {
+    "mode": "t2v",
+    "prompt": "Aerial view of a city at golden hour, slow cinematic pan, dramatic clouds",
+    "size": "1280*704",
+    "frame_num": 121,
+    "steps": 30,
+    "guidance": 5.0,
+    "seed": 42
+  }
 }
 ```
 
 ---
 
-### `i2v` — Image to Video
+## Error responses
 
-Animate a reference image from a text prompt. The image becomes the first frame.
-
-**Request:**
 ```json
 {
-  "mode": "i2v",
-  "prompt": "The cat slowly turns to look at the camera, blinking",
-  "image_url": "https://your-storage.com/frame.jpg",
-  "negative_prompt": "",
-  "size": "1280*704",
-  "frame_num": 81,
-  "steps": 50,
-  "guidance": 5.0,
-  "seed": -1
+  "error": "Description of what went wrong",
+  "traceback": "Full Python traceback (unexpected exceptions only)"
 }
 ```
 
-Or with base64-encoded image:
-```json
-{
-  "mode": "i2v",
-  "prompt": "...",
-  "image": "<base64_encoded_png_or_jpg>",
-  ...
-}
+| Error | Cause |
+|-------|-------|
+| `"prompt is required"` | No prompt provided |
+| `"i2v mode requires 'image' (base64) or 'image_url'"` | i2v with no image |
+| `"Invalid size '480*900'. Valid: [...]"` | Size not in allowed list |
+| `"frame_num must be 4n+1 (e.g. 49,65,81,...). Got 120"` | Invalid frame count |
+| `"Invalid mode 'video'. Valid: t2v, i2v"` | Wrong mode string |
+
+---
+
+## curl
+
+```bash
+# Submit
+curl -X POST https://api.runpod.ai/v2/hyfdmqik62okqs/run \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -d '{
+    "input": {
+      "mode": "i2v",
+      "image_url": "https://example.com/portrait.png",
+      "prompt": "She smiles warmly, a light breeze moves her hair",
+      "size": "720*1280",
+      "frame_num": 121,
+      "steps": 30
+    }
+  }'
+
+# Poll
+curl https://api.runpod.ai/v2/hyfdmqik62okqs/status/<job_id> \
+  -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
-**Response:** Same as `t2v`.
-
----
-
-## Field Reference
-
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `mode` | yes | — | `"t2v"` or `"i2v"` |
-| `prompt` | yes | — | Text description of the video |
-| `image` | i2v only | — | Base64-encoded image (PNG or JPG) |
-| `image_url` | i2v only | — | Public URL to image (alternative to `image`) |
-| `negative_prompt` | no | `""` | Content to avoid in generation |
-| `size` | no | `"1280*704"` | Output resolution: `"1280*704"` or `"704*1280"` |
-| `frame_num` | no | `81` | Number of frames — must be `4n+1` |
-| `steps` | no | `50` | Diffusion steps (20–50; fewer = faster, lower quality) |
-| `guidance` | no | `5.0` | Classifier-free guidance scale (3.0–7.0) |
-| `seed` | no | `-1` | Random seed; `-1` = random |
-
----
-
-## Frame Count → Duration Reference
-
-Frame counts must satisfy `(frame_num - 1) % 4 == 0`:
-
-| `frame_num` | Duration at 24 FPS | Notes |
-|------------|-------------------|-------|
-| 49 | 2.04 s | Quick preview |
-| 65 | 2.71 s | Short |
-| 81 | 3.37 s | Recommended default |
-| 97 | 4.04 s | Medium |
-| 113 | 4.71 s | Long |
-| 121 | 5.04 s | Maximum quality |
-
----
-
-## Resolution Guide
-
-| `size` | Pixels | Use for |
-|--------|--------|---------|
-| `1280*704` | 720P landscape | Horizontal videos, cinematic shots |
-| `704*1280` | 720P portrait | TikTok / Instagram Reels, vertical stories |
-
-> For `i2v`, the input image is automatically resized to match the `size` parameter, preserving aspect ratio with center crop.
-
----
-
-## Performance (A40 — 48 GB VRAM)
-
-| `frame_num` | `steps` | Approx. Time |
-|------------|---------|-------------|
-| 81 | 50 | ~45–60 s |
-| 121 | 50 | ~70–90 s |
-| 81 | 20 | ~20–30 s |
-
-Cold start (model load): ~30–40 s on first request.
-
----
-
-## Python Example
+## Python
 
 ```python
 import requests, time, os
 
-API_KEY = os.environ["RUNPOD_API_KEY"]
-ENDPOINT = "https://api.runpod.ai/v2/YOUR_ENDPOINT_ID"
-HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+API_KEY  = os.environ["RUNPOD_API_KEY"]
+BASE_URL = "https://api.runpod.ai/v2/hyfdmqik62okqs"
+HEADERS  = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
 def generate_video(payload: dict) -> dict:
-    r = requests.post(f"{ENDPOINT}/run", json={"input": payload}, headers=HEADERS)
-    job_id = r.json()["id"]
+    job_id = requests.post(f"{BASE_URL}/run", json={"input": payload}, headers=HEADERS).json()["id"]
     while True:
-        time.sleep(5)
-        r = requests.get(f"{ENDPOINT}/status/{job_id}", headers=HEADERS)
-        result = r.json()
+        time.sleep(10)
+        result = requests.get(f"{BASE_URL}/status/{job_id}", headers=HEADERS).json()
         if result["status"] == "COMPLETED":
             return result["output"]
         if result["status"] == "FAILED":
-            raise RuntimeError(result.get("error", "Job failed"))
+            raise RuntimeError(result.get("output", {}).get("error", "Job failed"))
 
-# T2V example
+# i2v — 720p portrait, 5 s
 output = generate_video({
-    "mode": "t2v",
-    "prompt": "A golden retriever puppy runs through a field of sunflowers at sunset",
-    "size": "1280*704",
-    "frame_num": 81
+    "mode":       "i2v",
+    "image_url":  "https://example.com/portrait.png",
+    "prompt":     "She smiles warmly, a light breeze moves her hair",
+    "size":       "720*1280",
+    "frame_num":  121,
+    "steps":      30,
 })
-print(output["video"])   # → https://pub-xxx.r2.dev/jobs/abc.mp4
-
-# I2V example
-output = generate_video({
-    "mode": "i2v",
-    "prompt": "The flowers sway in a gentle breeze, petals catching the light",
-    "image_url": "https://your-storage.com/frame.jpg",
-    "frame_num": 97
-})
-print(output["video"])
+print(output["video"])  # → https://pub-....r2.dev/jobs/<uuid>.mp4
 ```
