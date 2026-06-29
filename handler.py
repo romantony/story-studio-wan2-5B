@@ -15,7 +15,7 @@ t2v:
   { "mode": "t2v",
     "prompt": "Two cats boxing on a spotlit stage",
     "negative_prompt": "",
-    "size": "1280*704",      # 1280*704 (landscape) | 704*1280 (portrait)
+    "size": "1280*704",      # 1280*704|704*1280|720*1280|480*832|832*480
     "frame_num": 81,         # 4n+1: 49|65|81|97|113|121  (121=5s default)
     "steps": 50,
     "guidance": 5.0,
@@ -99,7 +99,13 @@ def upload_bytes(data: bytes, ext: str, content_type: str) -> str:
 # ── Global model handle ───────────────────────────────────────────────────────
 wan_model   = None
 _load_time  = None
-_VALID_SIZES = {"1280*704", "704*1280"}
+_VALID_SIZES = {
+    "1280*704",  # 720p landscape (16:9)
+    "704*1280",  # 720p portrait  (9:16)
+    "720*1280",  # 720p portrait  (9:16, standard)
+    "480*832",   # 480p portrait  (9:16)
+    "832*480",   # 480p landscape (16:9)
+}
 _FPS = 24
 
 def load_model():
